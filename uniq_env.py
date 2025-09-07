@@ -1,5 +1,5 @@
 """
-输出：uniq_env.h  +  uniq_env.json (最终版：完全自动化)
+输出：uniq_env.h  +  uniq_env.json
 """
 import json
 import pathlib
