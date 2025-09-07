@@ -65,12 +65,21 @@ macro-env/
 
 ## 🔧 高级用法
 
-### 添加新平台
+### 1.添加新平台
 编辑 `detect.json` 任意段落，**加一行即可**：
 ```json
 "__MyOS__": "MYOS"
 ```
 推送后 GitHub Actions 自动生成新版头文件。
+
+### 2.CI集成
+在自己的仓库里引用本头文件：
+```yaml
+- name: 下载 macro-env
+  run: |
+    git clone --depth 1 https://github.com/ze-mu-zhou/macro-env.git third_party/macro-env
+    echo "INCLUDE=-Ithird_party/macro-env" >> $GITHUB_ENV
+```
 
 ## 🌱 贡献指南
 1. Fork → 修改 detect.json
