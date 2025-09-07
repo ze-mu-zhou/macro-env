@@ -1,5 +1,5 @@
 """
-输出：uniq_env.h  +  uniq_env.json
+输出：uniq_env.h  +  uniq_env.json (最终版：完全自动化)
 """
 import json
 import pathlib
@@ -20,12 +20,12 @@ def pick(dic, undef_name):
     for macro, value in dic.items():
         lines.append(f"#if !defined(CUR_{undef_name}_LOCK)")
         lines.append(f"# ifdef {macro}")
-        lines.append(f"#  define CUR_{undef_name} {value}")
+        lines.append(f"#  define CUR_{undef_name} ENV_{value}")
         lines.append(f"#  define CUR_{undef_name}_LOCK 1")
         lines.append(f"# endif")
         lines.append(f"#endif")
     lines.append(f"#if !defined(CUR_{undef_name}_LOCK)")
-    lines.append(f"# define CUR_{undef_name} UNKNOWN")
+    lines.append(f"# define CUR_{undef_name} ENV_UNKNOWN")
     lines.append(f"#endif")
     return "\n".join(lines)
 
@@ -40,34 +40,62 @@ def gen_h(detect):
          *  生成时间: {datetime.datetime.now():%Y-%m-%d %H:%M:%S}
          *
          *  用法:
-         *  #include "uniq_env.h"
-         *
-         *  // CUR_SYSTEM, CUR_COMPILER, CUR_ARCH, CUR_BUILD, CUR_ABI 将被定义。
-         *  // CUR_FEATURE 是一个包含所有已启用特性的位掩码。
+         *  // 编译时检查: #if CUR_SYSTEM == ENV_WIN64
+         *  // 获取字符串: const char* s = CUR_SYSTEM_STRING;
+         *  // 检查特性:   #if (CUR_FEATURE & FEATURE_SSE2)
          * ==========================================================================
          */
     """)
-    body = "\n/* --- 1. 环境类别检测 (Environment Category Detection) --- */\n"
+    body = "\n/* --- 1. 环境类别检测 (值为带前缀的唯一标识符) --- */\n"
     body += pick(detect["OS"],       "SYSTEM")
     body += "\n" + pick(detect["Compiler"], "COMPILER")
     body += "\n" + pick(detect["Arch"],     "ARCH")
     body += "\n" + pick(detect["Build"],    "BUILD")
     body += "\n" + pick(detect["ABI"],      "ABI")
-    body += "\n\n/* --- 2. 特性位图 (Feature Bitmap) --- */\n"
-    features = detect["Feature"]
+
+    # --- (关键修改) 完整的特性宏定义与位图生成 ---
+    body += "\n\n/* --- 2. 特性宏定义与位图 (Feature Macros & Bitmap) --- */\n"
+    features = detect.get("Feature", {})
+
+    # 2a. 自动生成 FEATURE_XXX 宏
+    feature_defines = []
+    for macro, bit_pos in features.items():
+        # 将 __SSE2__ 转换为 FEATURE_SSE2, __ARM_NEON 转换为 FEATURE_ARMNEON
+        feature_name = "FEATURE_" + macro.strip('_').replace('_', '').upper()
+        feature_defines.append(f"#define {feature_name} (1u << {bit_pos})")
+    body += "\n".join(feature_defines) + "\n\n"
+
+    # 2b. 生成 CUR_FEATURE 位图
     temp_feature_macros = "\n".join(
         f"#ifdef {macro}\n# define _CUR_FEATURE_{bit_pos} (1u<<{bit_pos})\n#else\n# define _CUR_FEATURE_{bit_pos} (0u)\n#endif"
         for macro, bit_pos in features.items()
     )
+    body += "/* --- 特性位图计算 (Bitmap Calculation) --- */\n"
     body += temp_feature_macros + "\n\n"
     or_chain = " | ".join(f"_CUR_FEATURE_{bit_pos}" for bit_pos in features.values())
     body += f"#define CUR_FEATURE (0u | {or_chain})\n"
-    body += "\n/* --- 3. 辅助宏：所有可检测项的字符串形式 --- */\n"
-    briefs = "\n".join(
-        f'#define CUR_BRIEF_{key} "{value}"'
-        for section, rules in detect.items() for key, value in rules.items()
+
+    body += "\n/* --- 3. 所有可检测项的字符串形式 --- */\n"
+    briefs = "#define CUR_BRIEF__ENV_UNKNOWN \"UNKNOWN\"\n"
+    briefs += "\n".join(
+        f'#define CUR_BRIEF__ENV_{value} "{value}"'
+        for section, rules in detect.items() for value in rules.values()
     )
     body += briefs
+
+    conversion_logic = textwrap.dedent("""
+
+        /* --- 4. 动态宏名转换为字符串 --- */
+        #define UNIQ_ENV_CONCAT_IMPL(prefix, value) prefix##value
+        #define UNIQ_ENV_CONCAT(prefix, value) UNIQ_ENV_CONCAT_IMPL(prefix, value)
+
+        #define CUR_SYSTEM_STRING   UNIQ_ENV_CONCAT(CUR_BRIEF__, CUR_SYSTEM)
+        #define CUR_COMPILER_STRING UNIQ_ENV_CONCAT(CUR_BRIEF__, CUR_COMPILER)
+        #define CUR_ARCH_STRING     UNIQ_ENV_CONCAT(CUR_BRIEF__, CUR_ARCH)
+        #define CUR_BUILD_STRING    UNIQ_ENV_CONCAT(CUR_BRIEF__, CUR_BUILD)
+        #define CUR_ABI_STRING      UNIQ_ENV_CONCAT(CUR_BRIEF__, CUR_ABI)
+    """)
+    body += conversion_logic
 
     return header + body
 
@@ -78,12 +106,10 @@ def main():
     print(f"▶️  正在生成 {H_OUT.name}...")
     h_content = gen_h(detect_rules)
     H_OUT.write_text(h_content, encoding="utf-8")
+    
     print(f"▶️  正在生成 {JSON_OUT.name}...")
     log_data = {
-        "meta": {
-            "source_rules": str(DETECT_JSON),
-            "generated_at": datetime.datetime.now().isoformat()
-        },
+        "meta": { "source_rules": str(DETECT_JSON), "generated_at": datetime.datetime.now().isoformat() },
         "rules_used": detect_rules
     }
     JSON_OUT.write_text(json.dumps(log_data, indent=2, ensure_ascii=False), encoding="utf-8")
