@@ -32,6 +32,7 @@ python uniq_env.py
 
 # 3. 直接使用
 clang -std=c17 demo.c uniq_env.h -o demo && ./demo
+```
 ```C
 // demo.c
 #include "uniq_env.h"
